@@ -1,1 +1,172 @@
+RealSense D435i Navigation System
+
+1. Strategic Overview & Decision Tree
+Our perception system is built around one Intel RealSense D435i. It is a depth camera: alongside a normal colour image, it measures the distance to every pixel using a stereo pair of infrared imagers, so it produces the same kind of 3D point cloud a LiDAR would. The RGB stream is used for AprilTag detection and the depth stream is used for rock and crater detection.
+The rules decide how we use it. The camera score gives 120 points for zero cameras, 60 for one, 0 for two, and a penalty beyond that. A D435i contains three imagers inside a single housing (two infrared plus one colour). We have asked the organizers in writing whether such a module counts as one camera or three. They have responded saying it depends on the number of datastreams we use from the D435i, each datastream will be considered as a camera so 60 points reduction for each datastream.
+The D435i is our competition sensor. We use 2 datastreams, save the cost and mass of a LiDAR, and run everything described in this document as written.
+Ruling says count the data streams from the camera. Then the D435i would count as only 2 cameras as we would only use the Depth and RGB datastreams, so we would not receive points for cameras but have the advantage of full autonomy. Overall the rover navigates the course using Apriltags and avoids obstacles with the help of the Depth data.
+Two more standing rules shape everything below. The camera feed never leaves the robot — it is wired to the onboard computer and no video is streamed to the control room during a scored run. And the arena walls may not be used for navigation, so a geofence filter (Step 8) deletes every point outside the 9 m by 5 m arena interior before any mapping or planning code ever sees it.
+
+2. Why the D435i
+We chose the D435i over the 455 family for specific reasons, each tied to a condition:
+Range. The arena is 9 m long. The D435i has a reliable range of 3 m beyond which the reliability starts to fall which is good enough for our use as the entire arena itself is 9 m x 5 m.
+The built-in IMU has no magnetometer. Compasses are banned, and teams must prove theirs is off. Our proof is the datasheet: the chip physically contains no compass. There is nothing to disable, so the inspection goes smoothly.
+Its honest weaknesses, and what we do about each: depth accuracy decreases as distance increases, so we avoid relying on a single long-range depth measurement for critical decisions. AprilTags are positioned throughout the arena so the rover can obtain reliable visual references at practical operating distances, while obstacles detected at longer distances are re-checked as the rover approaches before the final path is selected. Stereo depth can also produce missing or noisy measurements on very dark, reflective, or low-texture surfaces, so we validate the D435i against the actual rock, sand, and crater mock-ups used in our arena. The D435i's active infrared projection also helps provide additional texture for stereo matching in areas where the surface itself has limited visual texture.
+
+3. Build Guide (Steps 1-8)
+This guide starts from a fresh Ubuntu 22.04 laptop and ends with a rover that drives itself around obstacles. Follow the steps in order; every step has a success sign, and nobody starts a step until the previous success sign has been seen. Commands are for the laptop first; the same steps repeat on the rover computer (Raspberry Pi 5 or Jetson) once things work on the bench.
+
+Step 1 — Install the camera driver and see the streams
+Install librealsense, which is Intel’s driver, plus its viewer application:
+sudo mkdir -p /etc/apt/keyrings
+curl -sSf https://librealsense.intel.com/Debian/librealsense.pgp | \
+  sudo tee /etc/apt/keyrings/librealsense.pgp > /dev/null
+echo "deb [signed-by=/etc/apt/keyrings/librealsense.pgp] \
+  https://librealsense.intel.com/Debian/apt-repo $(lsb_release -cs) main" | \
+  sudo tee /etc/apt/sources.list.d/librealsense.list
+sudo apt update
+sudo apt install librealsense2-utils librealsense2-dev
+realsense-viewer
+
+Success sign: realsense-viewer opens, and turning on the Stereo Module and RGB Camera shows a live depth picture (coloured by distance) and a live colour picture. If the viewer offers a firmware update for the camera, accept it now, before anything is built on top.
+Most common failure: the camera is detected but shows no image, usually on machines with Secure Boot blocking the kernel patch. Fix: it is fine to run without the patched kernel — the driver falls back to its USB backend automatically on recent versions; just make sure you installed from Intel’s repository above, not from Ubuntu’s default packages, which are outdated.
+
+Step 2 — Confirm the link is USB 3
+A USB 2 connection limits the available resolution and frame-rate combinations. Verify the connection before continuing:
+rs-enumerate-devices | grep -i "usb type"
+
+If it reports USB 2.x, try a different USB 3 port and a known-good USB 3 cable. Avoid USB hubs during initial testing.
+
+Step 3 — ROS 2 and the camera wrapper
+Install ROS 2 Humble (follow the standard ros.org install page for Ubuntu 22.04, choosing ros-humble-desktop), then the RealSense wrapper:
+sudo apt install ros-humble-realsense2-camera
+ros2 launch realsense2_camera rs_launch.py pointcloud.enable:=true
+
+In a second terminal:
+ros2 topic list | grep camera
+rviz2
+
+Success sign: topics such as /camera/camera/color/image_raw and /camera/camera/depth/color/points exist, and adding a PointCloud2 display in RViz2 (Fixed Frame set to camera_link) shows the room as a live 3D cloud of dots. Wave a hand in front of the camera and watch it appear in the cloud.
+Most common failure: topics exist but RViz2 shows nothing. Fix: the Fixed Frame is wrong — set it to camera_link, and in the PointCloud2 display select the exact topic name from the dropdown rather than typing it.
+
+Step 4 — Calibrate the colour camera
+The camera is factory calibrated, but the RGB camera parameters used for AprilTag pose estimation should be verified for our setup. Tag-position accuracy depends on knowing the colour camera parameters precisely, so we calibrate it once ourselves.
+sudo apt install ros-humble-camera-calibration
+ros2 run camera_calibration cameracalibrator --size 8x6 --square 0.025 \
+  --ros-args -r image:=/camera/camera/color/image_raw
+
+Move the board slowly through the view — near, far, tilted, in every corner — until all the progress bars fill and the Calibrate button activates. Press it, save, and keep the resulting file with the project. Success sign: the tool reports a reprojection error below about 0.5 pixels. Redo this any time the camera is refocused, remounted, or knocked.
+
+Step 5 — AprilTags: print, detect, measure
+Generate four AprilTags (IDs 0 to 3) using the AprilTag family selected for the competition (for example, tag36h11), and print each at exactly 20 cm on matte paper, glued to stiff flat board with a white border left around the black square:
+from pupil_apriltags import Detector
+import cv2
+import numpy as np
+detector = Detector(families="tag36h11")
+gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+detections = detector.detect(
+    gray,
+    estimate_tag_pose=True,
+    camera_params=[fx, fy, cx, cy],
+    tag_size=0.20
+)
+for tag in detections:
+    tag_id = tag.tag_id
+    tvec = tag.pose_t
+    # tvec = AprilTag position relative to camera, in metres
+Detection and position estimation in one small node: convert each colour frame to grayscale and detect the AprilTags using an AprilTag detector. For each detected tag, estimate its position relative to the camera using its known real size, the calibrated RGB camera parameters from Step 4, and the detected tag corners. The resulting tag pose is then transformed into the rover/map coordinate frame for localization.
+Success sign: hold an AprilTag in front of the camera and verify that its detected ID and estimated position change smoothly and sensibly as the tag is moved. Then validate properly: place a tag at tape-measured 1 m, 2 m and 3 m distances and record what the software reports at each. Compare the estimated position against the measured ground truth and record the error at each distance. Write the three measurements down — that table is our baseline for AprilTag position accuracy and reliable operating distance.
+Most common failure: tags detect when the rover is stationary but not while moving. The D435i RGB camera uses a rolling shutter, so rover vibration and rapid motion can affect tag images. First verify adequate lighting and exposure, then reduce rover speed during tag acquisition and use multiple tag observations rather than relying on a single frame.
+
+Step 6 — Rocks and craters from the depth cloud
+The idea in one sentence: fit a flat plane to the sand, then anything sticking above the plane is a rock and any patch falling below it (or returning nothing) is a crater. The skeleton node, commented for beginners:
+import rclpy, numpy as np, open3d as o3d
+from rclpy.node import Node
+from sensor_msgs.msg import PointCloud2
+from sensor_msgs_py import point_cloud2
+
+class ObstacleDetector(Node):
+    def __init__(self):
+        super().__init__("obstacle_detector")
+        self.sub = self.create_subscription(PointCloud2,
+            "/camera/camera/depth/color/points", self.cb, 5)
+
+    def cb(self, msg):
+        # 1. PointCloud2 message -> plain Nx3 array of points
+        pts = np.array([p for p in point_cloud2.read_points(
+            msg, field_names=("x","y","z"), skip_nans=True)])
+        pc = o3d.geometry.PointCloud(
+            o3d.utility.Vector3dVector(pts))
+        # 2. thin the cloud so processing is fast (3 cm grid)
+        pc = pc.voxel_down_sample(0.03)
+        # 3. find the sand: the dominant flat plane
+        plane, inliers = pc.segment_plane(0.02, 3, 200)
+        # 4. everything NOT on the plane is a candidate obstacle
+        rest = pc.select_by_index(inliers, invert=True)
+        # 5. group leftover points into blobs
+        labels = np.array(rest.cluster_dbscan(eps=0.10,
+            min_points=15))
+        # 6. keep blobs taller than 0.12 m -> rocks
+        #    (shorter blobs are just sand ripples)
+        # 7. regions where points sit BELOW the plane, or
+        #    where expected returns are missing -> craters
+        # 8. publish rock/crater positions for the costmap
+
+Success sign, tested on real sand with a real 30 cm object and a real dug hole: the rock appears as a cluster within 5 cm of its measured position, and the hole is flagged, at every distance from 0.5m –3 m. Do not sign this step off from a carpet-and-cardboard test; sand behaves differently.
+
+Step 7 — Fuse everything into one position
+Three information sources now exist: wheel encoders (fast but drifts), the D435i's built-in IMU , and absolute fixes from the tags. The robot_localization package blends them:
+sudo apt install ros-humble-robot-localization
+
+Its configuration file lists each input topic and which parts of it to trust: from wheel odometry take forward velocity and turn rate; from the IMU take angular velocity and acceleration; from the tag node take absolute x, y and heading. Start with the package’s sample EKF configuration and change only those entries.
+Success sign — the hand-push test: with everything running, push the rover exactly 2 m along a tape measure, turn it 90 degrees, push it back. The position shown on screen must track the real motion within 5 cm and a couple of degrees the whole way, including the drift visibly snapping back each time a tag comes into view. This single test validates Steps 1 to 7 together.
+
+Step 8 — Navigation, the wall filter, and the full rehearsal
+Install Nav2 and feed it the fused position and the obstacle detections, with rocks and craters marked as forbidden cells surrounded by a safety margin larger than half the rover’s width:
+sudo apt install ros-humble-navigation2 ros-humble-nav2-bringup
+
+Before any of this data reaches the mapping or planning layers, one small node applies the geofence: every point whose coordinates fall outside the known 9 m by 5 m arena interior is deleted. The filtered cloud is then passed to the mapping and planning layers. An RViz2 split view of the raw and filtered clouds is kept for inspection and debugging.
+Final success sign for the whole build: mark a practice arena on sand, place three rocks and three dug craters in new random spots, start the rover at a random position and heading, and let it drive itself to the far zone. The pass bar is ten consecutive crossings with zero contact and zero crater entries. Until that bar is met, travel autonomy is not offered in competition.
+
+4. Bench Checklist
+Print this page. Tick items in order; each line corresponds to a step above.
+☐  realsense-viewer shows live depth and colour; firmware updated
+☐  rs-enumerate-devices reports USB 3.x on the marked cable
+☐  ROS 2 topics up; point cloud visible in RViz2; hand-wave test done
+☐  Colour camera calibrated; calibration result recorded; file saved to repo
+☐  Four 20 cm tags printed matte, on stiff board, white border kept
+☐  AprilTag distance validation done at 1 / 2 / 3 m; error table recorded.
+☐  Rock (30 cm) detected on sand within 5 cm of true position, 0.5-3 m range
+☐  Dug crater flagged on sand, 0.5-3 m range
+☐  EKF hand-push test passed: 2 m + 90-degree turn tracked within 5 cm
+☐  Geofence filter demo ready: raw vs filtered cloud side by side in RViz2
+☐  Nav2 avoids a placed rock in a live driving test
+☐  Ten consecutive clean obstacle-zone crossings, randomized layout each time
+☐  Same checklist repeated on the rover computer, not only the laptop
+
+5. Troubleshooting
+Symptom
+Likely cause
+What to do
+Depth image has large black holes on the sand
+Surface too dark or glossy for stereo matching, or IR projector off
+Confirm the emitter is enabled in the launch parameters; test under arena-level lighting; if the problem occurs only on specific materials, test the same material under the actual arena lighting and adjust the depth-processing parameters if necessary.
+Tags detected but reported position jumps around
+Poor calibration, bent tag board, or wrong tag size constant
+Re-run Step 4 and verify the calibration result; verify the printed AprilTag measures exactly 20.0 cm with a ruler; verify the tag size is set to 0.20 m in the detector.
+Point cloud lags or frame rate collapses on the Pi/Jetson
+Full-resolution cloud is too heavy for the small computer
+Lower depth resolution to 640x480 in the launch file, raise the voxel size in Step 6 from 3 cm to 5 cm, and drop processing to 10 frames per second — the rover moves slowly, it does not need 30
+Position drifts even with tags in view
+Tag fixes not actually reaching the EKF, or trusted too little
+Echo the tag pose topic to confirm data flows; check the topic name in the EKF config matches exactly; loosen the covariance the tag node reports so the filter believes it
+Everything works on the laptop, fails on the rover computer
+Different install, USB 2 port, or power sagging under load
+Repeat Steps 1-3 natively on the rover computer; recheck the USB type; power the camera from a powered hub or a stable 5 V rail
+
+6. Emergency Variant (Camera alone, no LiDAR)
+In this design the D435i is the only camera, so this emergency section covers the depth stream failing mid-campaign (projector fault or stereo-module failure) while the RGB camera still works. 
+Tag-based positioning remains available because it uses the RGB stream. Obstacle detection loses direct depth measurements, so the fallback uses the calibrated RGB image and known camera geometry to estimate ground positions. With the camera mounting height, orientation and calibration known, floor pixels can be projected onto the arena floor. Raised regions can indicate obstacles, while visible crater rims and depressions can be used to identify crater candidates. Because this method is less reliable than depth-based detection, emergency mode reduces driving speed, increases safety margins and prefers open routes over the shortest route.
+Prepare two things in advance: record the camera mounting height and orientation, and keep the emergency behaviour behind a single configuration flag..
+Standing dependency: the organizers’ written answer on whether a multi-imager module counts as one camera. Branch selection in Section 1 waits on it; everything else in this document proceeds regardless.
 
