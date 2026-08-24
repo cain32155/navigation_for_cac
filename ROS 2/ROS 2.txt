@@ -1,1 +1,38 @@
+-->Why We Chose ROS 2?
+
+ROS 2 (Robot Operating System 2) is a modern, open-source middleware framework designed for building robust, scalable, and maintainable robotic systems.
+
+We selected ROS 2 for Caterpillar because:
+
+1. Decentralized architecture: Unlike ROS 1, ROS 2 removes the single point of failure (the master node) by using DDS (Data Distribution Service) for peer-to-peer communication, making the system more resilient—critical for a competition rover.
+2. Real-time and QoS support: ROS 2 provides fine-grained Quality of Service (QoS) policies, allowing us to prioritize time-sensitive data (e.g., motor commands) over less critical streams (e.g., logs).
+3. Multi-language and cross-platform: Native support for Python 3 and C++17, plus official support for Raspberry Pi (including Pi 5), aligns with our hardware and team skill set.
+4. Long-term viability: ROS 1 reached end-of-life in May 2025; ROS 2 is the actively maintained and future-proof choice for new projects.
+5. Modularity: ROS 2’s node-based design lets us develop, test, and debug subsystems (sensing, control, navigation) independently—ideal for a student team iterating quickly.
+
+-->Why not other frameworks?
+
+1. LCM: Too minimal—no built-in navigation, visualization, or parameter management; we’d waste time rebuilding what ROS 2 already provides.
+2. YARP: Focused on humanoid/vision robots with weaker support for mobile platforms and embedded Linux like Raspberry Pi.
+3. Isaac ROS: Requires NVIDIA Jetson GPUs; incompatible with our Raspberry Pi 5 hardware and overkill for our current perception needs.
+
+-->ROS 2 Architecture Overview
+
+ROS 2 is built around a few core abstractions that enable modular, distributed robotics software:
+1. Nodes: Independent processes (or threads) that perform a single function—e.g., reading a camera, driving a motor, or running SLAM. Multiple nodes run in parallel and communicate via standardized interfaces.
+2. Topics: Asynchronous, publish-subscribe channels for streaming data (e.g., /camera/image_raw, /odom). Any node can publish or subscribe; no node “owns” a topic.
+3. Services: Synchronous request-response calls for discrete operations (e.g., /save_map, /trigger_calibration).
+4. Actions: For long-running, interruptible tasks with feedback (e.g., navigating to a goal).
+5. DDS Middleware: Under the hood, ROS 2 uses DDS for discovery, transport, and QoS—enabling deterministic, secure, and networked communication without a central broker.
+
+-->What We’ll Use
+
+1. Nav2 Navigation Stack: For autonomous path planning, obstacle avoidance, and goal navigation using costmaps and local/global planners. We’ll integrate this once mapping and localization are stable.
+2. TF2 (Transform Library): Manages coordinate frames (e.g., base_link → camera_link), essential for sensor fusion and navigation.
+3. Launch System: Python-based launch files to start multiple nodes with parameters, remappings, and lifecycle management in one command.
+4. Parameters & Lifecycle Nodes: Configure node behavior at runtime (e.g., PID gains) and manage node states (unconfigured → inactive → active).
+5. ros2bag (Recording & Replay): Log sensor data and commands for offline analysis and debugging—critical for tuning and post-run review.
+
+-->Possible Nodes
+
 
