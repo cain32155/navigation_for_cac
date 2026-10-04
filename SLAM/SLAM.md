@@ -24,11 +24,11 @@ Where are things relative to the rover itself   ((Pos)everything)rover 
 **LiDAR**  -> **sends data such as orientation and distance** -> **ROS packages it into** -> sensor_msgs/LaserScan -> **published as** /scan  -> **sent to slam** 
 
 
-#3D SLAM
+# 3D SLAM
 
-##RGB - Shows the pixels and how exactly things look like. For example, it says “there is a rock.”
+## RGB - Shows the pixels and how exactly things look like. For example, it says “there is a rock.”
 
-##Depth - Shows the distance between each pixel which is the depth value so basically, how far away everything is. For example, it says “it is 20m away”
+## Depth - Shows the distance between each pixel which is the depth value so basically, how far away everything is. For example, it says “it is 20m away”
 
 RGB + Depth gives what object and how far it is. “The rock is 20m away”.
 
