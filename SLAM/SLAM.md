@@ -26,26 +26,30 @@ Where are things relative to the rover itself   ((Pos)everything)rover 
 
 # 3D SLAM
 
-## RGB - Shows the pixels and how exactly things look like. For example, it says “there is a rock.”
+***RGB*** - Shows the pixels and how exactly things look like. For example, it says “there is a rock.”
 
-## Depth - Shows the distance between each pixel which is the depth value so basically, how far away everything is. For example, it says “it is 20m away”
+***Depth*** - Shows the distance between each pixel which is the depth value so basically, how far away everything is. For example, it says “it is 20m away”
 
 RGB + Depth gives what object and how far it is. “The rock is 20m away”.
 
 All of this is in the form of a 2D matrix and point cloud converts this into 3D. 
 
-**Camera calibration** - Focal length, principal point, anything that may distort the images such as the edges of the lenses etc and the dimensions. All of these may affect it so we calculate relative to this and make this our zero (It is like normalizing an error, “Zero” may not always be the standard or ideal). 
+***Camera calibration*** - Focal length, principal point, anything that may distort the images such as the edges of the lenses etc and the dimensions. All of these may affect it so we calculate relative to this and make this our zero (It is like normalizing an error, “Zero” may not always be the standard or ideal). 
 
-**IMU** -   Accelerometer + Gyroscope (angular velocity, pitch, roll, yaw) + Magnetometer (magnetic field direction). IMU is needed incase there were speed bumps and the rover tilts making the LiDAR tilt. 
+***IMU*** -   Accelerometer + Gyroscope (angular velocity, pitch, roll, yaw) + Magnetometer (magnetic field direction). IMU is needed incase there were speed bumps and the rover tilts making the LiDAR tilt. 
 
 Since last time it was mentioned that camera jitter and vibration issue persisted, IMU would help as well (along with rigid, stiff bracket, aluminium with it being as low as possible). 
 
-***CAC rulebook states that we cannot use the navigation aspect of IMU and GPS. We need to turn that off.*** 
+***CAC rulebook states that we cannot use the navigation aspect of IMU (Compass and GPS). We need to turn that off.*** 
 
 
 # WHY  SLAM  TOOLBOX?
 
--> It is specifically made for 2D and ROS2.    -> It has features related to odometry, laserscans, optimisation (pose graph) and also publishes the map (2D occupancy matrix) and pose (x,y,orientation).   -> Can integrate it with NAV2
+-> It is specifically made for 2D and ROS2.    
+
+-> It has features related to odometry, laserscans, optimisation (pose graph) and also publishes the map (2D occupancy matrix) and pose (x,y,orientation). 
+
+-> Can integrate it with NAV2
 
 -> Can save and reload maps
 
@@ -53,7 +57,7 @@ Since last time it was mentioned that camera jitter and vibration issue persiste
 
 ## ALTERNATIVES: 
 
-**Cartographer (Google)** - though it is not as straightforward when it comes to integration with NAV2. 
+***Cartographer (Google)*** - though it is not as straightforward when it comes to integration with NAV2. 
 
 
 # WHY  RTAB  MAP ?
