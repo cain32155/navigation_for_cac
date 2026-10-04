@@ -76,7 +76,7 @@ Since last time it was mentioned that camera jitter and vibration issue persiste
 
 ## ALTERNATIVES: 
 
-**ORB SLAM 3**- Also supports stereo, RGB-D and visual intertial data but it does not create 3D maps. It creates a sparse map. Run on CPU. 
+**ORB SLAM 3** - Also supports stereo, RGB-D and visual intertial data but it does not create 3D maps. It creates a sparse map. Run on CPU. 
 
 
 **NVIDIA ISAAC ROS VISUAL SLAM** - Also supports stereo, visual and IMU data but it maps the visual slam or odometry, not 3D. Can only be run on NVIDIA GPU. This would help as the ROS2 team is focussing on camera timing and the target of 30Hz and tight synchronization.
