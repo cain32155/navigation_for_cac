@@ -1,3 +1,5 @@
+# 2D SLAM 
+
 Instead of creating a map, the 2D SLAM with LiDAR gives the distance measured in the form of a ROS LaserScan message such as /scan. 
 
 Firstly, check if ROS driver for the LiDAR we are using exists, if so, use that. If not, we gotta write code for that as well. 
@@ -9,7 +11,7 @@ The MAP for 2D slam is just an occupancy matrix like those seat in flight bookin
 
 We might run into pits/craters though which might be a problem as LiDAR is not very good at detecting the holes as it scans horizontally. So this would help with the boulder type of obstacles. 
 
-# TRANSFORM
+## TRANSFORM
 
 **Map** -  Where the rover is in the arena 
 
