@@ -13,12 +13,12 @@ It is also a nonlinear state estimation algorithm that is an improvement overe E
 
 AI Slop: 
 The tradeoffs
-	                EKF                            	UKF
-Nonlinearity	  First-order	        Better (second-order for the mean)
-Jacobians	      Required	          Not needed
-Compute	        Lower	              Roughly 2-3x higher; scales with state size
-Tuning	        Q, R	              Q, R plus α, β, κ spread parameters
-Robustness	    Can diverge on      Usually more forgiving, but can still fail
-                bad linearization	
-Numerical 	    Fewer	              Covariance can lose positive-definiteness; needs care
+	                	EKF                            	UKF
+Nonlinearity	  	First-order	        	Better (second-order for the mean)
+Jacobians	      	Required	          	Not needed
+Compute	          	Lower	              	Roughly 2-3x higher; scales with state size
+Tuning	        	Q, R	              	Q, R plus α, β, κ spread parameters
+Robustness	    	Can diverge on      	Usually more forgiving, but can still fail
+                	bad linearization	
+Numerical 	    	Fewer	              	Covariance can lose positive-definiteness; needs care
 issues
