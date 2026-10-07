@@ -8,7 +8,9 @@ The extended Kalman filter in general is not an optimal estimator . In addition,
 
 Unscented Kalman Filter (UKF):
 
-It is also a nonlinear state estimation algorithm that is an improvement overe EKF. It avoids the linearization errors of the Extended Kalman Filter (EKF) by using the Unscented Transform (UT).In the UKF, the probability density is approximated by a deterministic sampling of points which represent the underlying distribution as a Gaussian. The nonlinear transformation of these points are intended to be an estimation of the posterior distribution, the moments of which can then be derived from the transformed samples. The transformation is known as the unscented transform. The UKF tends to be more robust and more accurate than the EKF in its estimation of error in all the directions.
+It is also a nonlinear state estimation algorithm that is an improvement overe EKF. It avoids the linearization errors of the Extended Kalman Filter (EKF) by using the Unscented Transform (UT).In the UKF, the probability density is approximated by a deterministic sampling
+of points which represent the underlying distribution as a Gaussian. The nonlinear transformation of these points are intended to be an estimation of the posterior distribution, the moments of which can then be derived from the transformed samples. The transformation is 
+known as the unscented transform. The UKF tends to be more robust and more accurate than the EKF in its estimation of error in all the directions.
 
 
 AI Slop: 
