@@ -1,0 +1,34 @@
+   NAVIGATION TECH STACK
+since we will be getting a fixed map and a instantaneous map
+we will be using A* algo solely on the fixed map .
+then we will use the spatio temporal voxel layer(it develops a 3d grid where each block danger level is classified by the hieght 
+if the height is too high or low it is ignored but if the hieght is similar to the rover , we classify as the danger and turn all such blocks into a 2D grid map) for the instantaneous map as it becomes something like a survival instinct for the rover , helps the rover react.
+
+how to navigate the costmaps:
+Forming the shortest path:
+	Depending on the steering style we will use either SmacPlanner2D or SmacPlannerHybrid plugin
+both depend on the A* algorithm
+what is A* alogrithm :
+a shortest path deciding algorithm
+it works by assigning the scores to all the paths forming on the criteria
+shortest path
+the distance from the obstacle.
+then the algorithm will choose the path with the best score 
+
+tank style(Differential Drive): in this the path that will be suggested will with sharp 90 degree angles,as in the steering system the rover will drive exactly like a tank.thus we will use the SmacPlanner2D plugin
+car Style(Ackermann) : in this the path that will be suggested will be including curve angles ,simulating how a car based rover will drive.thus we will use the SmacPlannerHybrid plugin
+All these will work on both the rasberry pi and jetson 
+the control algorithm will differ
+How to control the rover to take the new path:
+for this we can use Regulated Pure Pursuit(rpp)(preferrable for rasberry pi)
+it keeps following the line set by the A* path 
+it has a built in parameter “use_cost_regulated_linear_velocity_scaling”, which slows down the rover in case of a sharp turn or a obstacle
+ If we use use jetson,
+we can also try the model predictive path integral(MPPI)(preferrable for jetson )
+how does it work:
+it  forms hundreds of simulated paths at once 
+then it brings in tiny variations in the speed to simulate skidding,or skinholes or any problem that might arise due to uneven terrain
+then it will check the end of each path how the rover ended up 
+it will disregard the crashed rovers and pick the best path or the path where rover makes it safely
+thus takes up a lot of compute power.
+
