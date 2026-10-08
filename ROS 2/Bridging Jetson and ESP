@@ -1,0 +1,241 @@
+Bridging Esp32 and Raspi/Jetson 
+
+ESP32 Drive Controller: wheel motors, encoders, and low-level drive control
+ESP32 Arm Controller: arm actuators, joint feedback, and low-level arm control
+Jetson: high level 
+support bidirectional command and telemetry exchange, and integration with the robot’s URDF and ROS 2 control configuration.
+https://control.ros.org/jazzy/doc/ros2_control/hardware_interface/doc/hardware_interface_types_userdoc.html
+
+
+High-Level Architecture
+Jetson/ Main Computer
+Ubuntu 24 and ROS 2
+Autonomy and navigation nodes
+Perception and state estimation
+Mission coordination
+TF and robot model
+ros2_control Controller Manager
+Hardware-interface plugins, if using the custom protocol approach
+Communication Layer
+USB serial, UART, or CAN/CAN-FD, depending on hardware support
+A defined message format, command validation, timeouts, feedback, and error handling where applicable
+Hardware connection between esp32 and Jetson
+Plug a micro-USB or USB-C cable from the ESP32 directly into a USB port on the Jetson.
+Or
+UART: 
+ESP32 TX → Raspberry Pi RX (e.g., GPIO15 / RXD) ESP32 RX → Raspberry Pi TX (e.g., GPIO14 / TXD) ESP32 GND → Raspberry Pi GND
+
+We are not using I2c since it is intended for relatively short board-level connections and peripherals , requires shared bus so bus errors possible
+Spi unnecessary complexity, more wires
+Mqtt and Bluetooth connect over networks so might be interrupted, not reliable as a main primary link. 
+
+
+ESP32 Drive Controller
+Low-level wheel/motor control
+Encoder acquisition
+Velocity or position control as required
+Drive status and fault telemetry
+Watchdog and safe-stop behavior
+ESP32 Arm Controller
+Low-level actuator control
+Joint feedback acquisition where supported
+Local actuator limits and fault handling
+Arm status and telemetry
+
+https://github.com/Sreerajvr172001/diffdrive_esp32
+
+
+
+
+
+Option A  ROS 2 + ros2_control + Custom ESP32 Firmware
+
+Architecture
+ROS 2 autonomy/navigation nodes
+ |
+ v
+ ros2_control Controller Manager
+ |
+  Drive hardware-interface plugin
+ |       |
+ |       - USB serial/UART or selected bus
+ |               |
+ |               – ESP32 Drive Firmware
+ |
+ – Arm hardware-interface plugin
+ |
+ - USB serial/UART or selected bus
+ |
+ – ESP32 Arm Firmware
+Operation
+ROS 2 controllers generate commands.
+The hardware-interface plugins convert commands into the agreed embedded message format.
+Each ESP32 validates and executes commands locally.
+The ESP32s return feedback and fault/status data.
+The hardware interfaces expose relevant state and command interfaces to ros2_control.
+Advantages
+Explicit control over message format and firmware behavior.
+No micro-ROS Agent is required.
+Clear separation between high-level ROS 2 logic and embedded control.
+Can be developed and tested incrementally.
+Disadvantages
+must design and maintain the communication protocol.
+Custom hardware-interface plugins and embedded communication code are required.
+Reconnection, timeouts, message validation, telemetry and error handling must be designed and tested.
+
+A robot where the Raspberry Pi coordinates the system and the ESP32s act as dedicated embedded controllers.
+B — ROS 2 + micro-ROS
+Architecture
+ROS 2 autonomy/navigation nodes
+ |
+ – ROS 2 control and coordination
+ |
+ – micro-ROS Agent on Raspberry Pi
+ |
+ – Supported transport
+ |       |
+ |       – ESP32 Drive micro-ROS client
+ |
+  Supported transport
+ |
+ ESP32 Arm micro-ROS client
+
+Operation
+Each ESP32 runs a supported micro-ROS client implementation.
+The micro-ROS Agent bridges the embedded clients to the ROS 2 environment.
+The ESP32s expose publishers, subscribers and other supported ROS interfaces.
+The Jetson coordinates the drive and arm through ROS 2 communication.
+
+Advantages
+Embedded controllers can participate in ROS-oriented communication.
+Reduces the need to invent an entire application-level communication protocol.
+Can improve modularity when the drive and arm need separate ROS interfaces.
+Supports suitable embedded transports, subject to platform and implementation constraints.
+Disadvantages
+Requires Agent setup and configuration.
+Adds middleware, embedded resource and integration considerations.
+Supported features, memory use, timing and transport behavior must be validated on the exact ESP32 boards.
+Does not eliminate the need for embedded firmware, actuator control or safety mechanisms.
+C — ROS 2 + Topic-Based ros2_control + Custom Serial Bridge
+ROS 2 autonomy/navigation nodes
+ ↓
+ ros2_control Controller Manager
+ ↓
+ Topic-Based Hardware Interface
+ ↓
+ ROS 2 command and feedback topics
+ ↓
+ Custom serial bridge node on Jetson
+ ↓
+ USB serial/UART
+ ↓
+ ESP32 Drive Controller
+Operation
+The ROS 2 controllers generate commands for the robot joints.
+The topic-based hardware interface exchanges joint commands and state feedback through ROS 2 topics.
+A serial bridge node on the Jetson converts the ROS 2 messages into the agreed communication format and sends them to the ESP32 through USB serial or UART.
+The ESP32 receives and validates the commands, controls the motors or arm actuators, and reads encoder or joint feedback.
+The ESP32 sends the feedback and status information back to the Jetson through the serial bridge.
+The bridge publishes the feedback through the appropriate ROS 2 topics, allowing the hardware interface and controllers to access the robot state.
+Advantages
+• Reduces the need to write a custom ros2_control hardware interface by using an existing topic-based implementation.
+ • Keeps ros2_control on the Jetson and allows Arduino firmware on the ESP32.
+ • Separates ROS 2 control logic from serial communication.
+ • Does not require micro-ROS or a micro-ROS Agent.
+Disadvantages
+• A custom serial bridge and ESP32 communication code are still required.
+ • Message formats, timeouts, feedback and error handling must be implemented.
+ • Compatibility with the required joint interfaces and controllers must be verified.
+ • Adds another communication layer that must be tested for latency and reliability.
+(AI)
+
+https://github.com/PickNikRobotics/topic_based_ros2_control
+
+
+Alternate: ROS 2 + CAN/CAN-FD or RS-485 + Custom Driver
+Architecture
+ROS 2 and ros2_control on Jetson
+ |
+ v
+ Custom hardware interface / bus driver
+ |
+ v
+ Selected communication bus
+ |
+ +– ESP32 Drive Controller
+ |
+ +– ESP32 Arm Controller
+Advantages
+May be suitable for a multi-controller system with specific wiring or electrical requirements.
+CAN/CAN-FD can provide bus-level arbitration and error detection.
+RS-485 supports differential signalling and can be appropriate for suitable multi-device serial networks.
+Disadvantages
+Requires compatible hardware and appropriate transceivers.
+A communication protocol and ROS 2 driver are still needed.
+Bus selection must account for bandwidth, timing, topology, cable length and electrical constraints.
+Neither CAN nor RS-485 automatically provides ROS 2 topics or controller integration.
+Since we are using usb/uart according to the flow diagram this should not really be considered as much.
+Alternatives Not Selected for Initial Implementation
+MAVROS
+MAVROS bridges ROS 2 and MAVLink-based systems, commonly PX4 or ArduPilot autopilots. It is not a generic ROS 2-to-ESP32 motor-controller bridge. Excluding i unless the robot includes a relevant MAVLink device.
+rosserial
+A legacy embedded ROS client approach associated with ROS 1. It is not the preferred starting point for a new ROS 2 integration.
+Zenoh-Pico
+A lightweight communication alternative with demonstrated microcontroller-to-ROS 2 integration paths. advanced research option, but we have to validate the precise integration path and maturity before selecting it.
+Direct custom TCP/UDP
+Possible over Wi-Fi or Ethernet, but it requires custom message handling, reconnection logic, command validation, timeouts and telemetry. Consider it only if network-based communication is justified. Too complex.
+
+
+
+Plan
+A)
+We write a custom SystemInterface hardware plugin  which acts as a bridge  between ROS 2 and the ESP32. The plugin will receive commands from ros2_control, send them to the ESP32 through a communication protocollike UART/USB serial, and read back encoder feedback from the ESP32. We will have to design the communication protocol and implement the communication code on both the Jetson and ESP32 side.
+ For this We have to create a ROS 2 package, write a class which inherits from hardware_interface::SystemInterface, implement functions like on_init(), read() and write(), and then compile it as a shared library so that ROS 2 can load it as a plugin. The plugin will expose the wheel command and state interfaces, send the wheel velocity commands to the ESP32 and read back encoder feedback. We will also need to configure the plugin in our URDF through the ros2_control section
+
+
+
+If we choose micro-ROS instead, the ESP32 will run a micro-ROS client, and the Jetson will run the micro-ROS Agent. the ESP32 communicates with the ROS 2 system using micro-ROS rather than us designing the entire ROS-facing communication layer from scratch. But, we still need to write the ESP32 stuff for controlling the motors and reading encoders. If we go in this direction we create the micro ROS Agent on the Jetson and the micro ROS Client on the ESP32. For the Agent, we will use the micro_ros_setup tools to create and build the Agent workspace and then run it using the transport we choose, for example USB serial. For the Client, create the ESP32 firmware, build it and flash it onto the board. The Agent will connect the ESP32 Client to the ROS 2 network, allowing them to exchange ROS messages.
+But still Agent and Client alone will not connect the hardware to ros2_control automatically. We still need to implement the SystemInterface plugin on the Jetson so that it can connect the wheel command and encoder feedback interfaces of ros2_control to the communication layer used by micro ROS. 
+
+ESP32 code 
+For the ESP32 firmware, we are planning to mainly use Arduino IDE for now, since it is enough for writing the motor control logic, reading encoder feedback and handling communication. If we find that we need more control over task scheduling or RTOS features, we can consider moving to ESP IDF, which uses FreeRTOS. But we do not need to switch to ESP IDF for now
+All of the code is mostly in c/c++. Bit high level nodes can be in python in ros2. 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+URDF and YAML Integration
+URDF 
+The robot model should describe the robot’s physical structure, links, joints, coordinate frames and relevant joint limits.
+If ros2_control is selected, the model can also contain ros2_control hardware declarations, command interfaces, state interfaces and the hardware plugin configuration.
+The model must reflect the actual drive and arm joints. 
+YAML
+YAML configuration files for relevant controller parameters and settings, such as:
+Controller types and names
+Joint lists
+Command and state interfaces
+Controller update rates
+Joint-state broadcaster configuration
+Joint trajectory controller configuration, if suitable for the arm
+Velocity controller configuration, if suitable for the drive system
+The exact controllers and parameters depend on the actuator configuration, ROS 2 distribution 
+(AI)
+
+
+
+
+
+
+
+
+
