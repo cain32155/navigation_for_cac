@@ -16,19 +16,10 @@ the distance from the obstacle.
 then the algorithm will choose the path with the best score 
 
 tank style(Differential Drive): in this the path that will be suggested will with sharp 90 degree angles,as in the steering system the rover will drive exactly like a tank.thus we will use the SmacPlanner2D plugin
-car Style(Ackermann) : in this the path that will be suggested will be including curve angles ,simulating how a car based rover will drive.thus we will use the SmacPlannerHybrid plugin
 All these will work on both the rasberry pi and jetson 
 the control algorithm will differ
 How to control the rover to take the new path:
-for this we can use Regulated Pure Pursuit(rpp)(preferrable for rasberry pi)
+for this we can use Regulated Pure Pursuit(rpp)
 it keeps following the line set by the A* path 
 it has a built in parameter “use_cost_regulated_linear_velocity_scaling”, which slows down the rover in case of a sharp turn or a obstacle
- If we use use jetson,
-we can also try the model predictive path integral(MPPI)(preferrable for jetson )
-how does it work:
-it  forms hundreds of simulated paths at once 
-then it brings in tiny variations in the speed to simulate skidding,or skinholes or any problem that might arise due to uneven terrain
-then it will check the end of each path how the rover ended up 
-it will disregard the crashed rovers and pick the best path or the path where rover makes it safely
-thus takes up a lot of compute power.
 
