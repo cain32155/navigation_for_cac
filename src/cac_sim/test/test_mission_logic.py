@@ -198,3 +198,89 @@ def test_turn_in_place_safe():
     # turning 90 deg swings the front over the disc
     assert not ml.turn_in_place_safe(g, (0.0, 0.0, 0.0), math.pi / 2, FP, 0.06)
     assert ml.turn_in_place_safe(g, (0.0, 0.0, 0.0), -0.3, FP, 0.06)
+
+
+def test_reverse_distance_between_cycles():
+    exc, con = GOALS['excavation_approach'], GOALS['construction_approach']
+    d = ml.reverse_distance(con, exc)
+    assert d is not None and math.isclose(d, exc[0] - con[0])          # straight back, negative
+    # typical arrival errors are still accepted
+    assert ml.reverse_distance((con[0] - 0.15, 0.12, 0.25), exc) is not None
+    # goal ahead, too far sideways, or heading too different: leave it to Nav2
+    assert ml.reverse_distance(exc, con) is None
+    assert ml.reverse_distance((con[0], 0.5, 0.0), exc) is None
+    assert ml.reverse_distance((con[0], 0.0, 0.8), exc) is None
+    assert ml.reverse_distance((exc[0] + 0.02, 0.0, 0.0), exc) is None   # already there
+
+
+def test_straight_drive_safe():
+    g = _boundary_grid([(1.0, 0.0, 0.05)])           # lethal disc 1 m ahead of the origin
+    assert ml.straight_drive_safe(g, (0.0, 0.0, 0.0), -0.8, FP, 0.06)       # backing away
+    assert not ml.straight_drive_safe(g, (0.0, 0.0, 0.0), 0.5, FP, 0.06)    # front reaches the disc
+    # the real between-cycle move: construction goal -> excavation goal, clear arena
+    con, exc = GOALS['construction_approach'], GOALS['excavation_approach']
+    assert ml.straight_drive_safe(_boundary_grid(), con, exc[0] - con[0], FP, 0.06)
+    # an excavation-zone boulder behind the rover blocks it
+    assert not ml.straight_drive_safe(_boundary_grid([(2.35 - 0.6, 0.0, 0.15)]), con, exc[0] - con[0], FP, 0.06)
+
+
+def test_another_cycle_is_bounded_by_count_and_time():
+    ok, _ = ml.another_cycle(1, 10, 200.0, 600.0, 90.0, 150.0)
+    assert ok                                           # 200 + 90 + 150 = 440 <= 600
+    ok, why = ml.another_cycle(1, 10, 400.0, 600.0, 90.0, 150.0)
+    assert not ok and 'budget' in why                   # 640 > 600
+    ok, why = ml.another_cycle(3, 3, 100.0, 600.0, 60.0, 150.0)
+    assert not ok and '3/3' in why
+    # exactly at the budget is allowed
+    assert ml.another_cycle(1, 5, 360.0, 600.0, 90.0, 150.0)[0]
+
+
+def test_dig_correction_keeps_the_lip_in_the_excavation_zone():
+    zone, lip, target = (2.0, 3.5), 0.94, 2.35 + 0.94
+    assert ml.dig_correction((2.35, 0.0, 0.0), lip, zone, target) == 0.0          # nominal
+    d = ml.dig_correction((2.56, 0.04, math.radians(2)), lip, zone, target)      # seed 10 E1: lip at 3.50
+    assert d is not None and d < 0 and math.isclose(2.56 + d * math.cos(math.radians(2)) + lip *
+                                                    math.cos(math.radians(2)), target, abs_tol=1e-6)
+    assert ml.dig_correction((1.0, 0.0, 0.0), lip, zone, target) is None          # too far to fix by a nudge
+    assert ml.dig_correction((2.5, 0.0, math.pi / 2), lip, zone, target) == 0.0   # sideways: lip x = 2.5, inside
+    assert ml.dig_correction((3.45, 0.0, math.radians(80)), lip, zone, target) is None  # lip at 3.61, nearly sideways
+
+
+def test_escape_long_drive_backs_out_of_a_closing_corridor():
+    # Lethal cells along both sides of the front half (a corridor that narrowed in the
+    # costmap): no turn or short drive ends clear, backing 0.65 m along the track does.
+    g = _boundary_grid([(x / 100, s * 0.46, 0.04) for x in range(20, 65, 5) for s in (1, -1)])
+    pose = (0.0, 0.0, 0.0)
+    assert ml.escape_motion(g, pose, FP, pad=0.06, objective='clearest') is None
+    kind, amount = ml.escape_motion(g, pose, FP, pad=0.06, objective='clearest', max_drive=0.8)
+    assert kind == 'drive' and -0.8 <= amount < -0.25
+    assert not ml.lethal_cells(g, (amount, 0.0, 0.0), FP, 0.06 + 0.03)
+
+
+def test_scan_due_only_in_the_obstacle_zone_every_spacing():
+    zone = (-2.7, 2.0)
+    assert ml.scan_due((-1.0, 0.0, 0.0), None, 1.2, zone)                 # first time in the zone
+    assert not ml.scan_due((-3.5, 0.0, 0.0), None, 1.2, zone)             # start zone
+    assert not ml.scan_due((2.5, 0.0, 0.0), None, 1.2, zone)              # excavation zone
+    assert not ml.scan_due((1.85, 0.0, 0.0), None, 1.2, zone)             # within 0.3 m of the edge
+    assert not ml.scan_due((-0.2, 0.0, 0.0), (-1.0, 0.0), 1.2, zone)      # 0.8 m since the last scan
+    assert ml.scan_due((0.3, 0.0, 0.0), (-1.0, 0.0), 1.2, zone)
+
+
+def test_another_cycle_stops_on_the_drift_estimate():
+    ok, why = ml.another_cycle(3, 10, 200.0, 600.0, 60.0, 150.0, drift_now=0.20, drift_per_cycle=0.08, drift_max=0.25)
+    assert not ok and 'drift' in why
+    assert ml.another_cycle(3, 10, 200.0, 600.0, 60.0, 150.0, drift_now=0.10, drift_per_cycle=0.08,
+                            drift_max=0.25)[0]
+
+
+def test_construction_goal_margin_survives_nav2_tolerance_and_localization_error():
+    # Nav2 stops up to 0.20 m short; localization x error reached 0.14 m (E4 seed 9: the
+    # front was believed 0.14 m across x = 3.5 but was 0.3 cm short). The goal must leave
+    # the zone crossing true with that error, and the pour (lip 0.91 m ahead) on the berm target.
+    gx = GOALS['construction_approach'][0]
+    berm, r = P['zones']['berm_target'][0], 0.4
+    for stop in (gx, gx - 0.20):
+        assert ml.zone_ok('construction', (stop - 0.14, 0.0, 0.0), FP, Z, cross_margin=0.10)
+        assert abs(stop + 0.91 - berm) <= r - 0.15            # pour inside the target with 0.15 m to spare
+        assert ml.zone_ok('construction', (stop, 0.0, 0.0), FP, Z)   # and off the east wall

@@ -1,5 +1,8 @@
 # Validation report — 2026-10-12
 
+> Superseded by [`validation_2026-10-13.md`](validation_2026-10-13.md). One claim below (seed 14,
+> state C) was corrected on 2026-10-13; the correction is marked in place.
+
 Package: `cac_sim` (ROS 2 Jazzy + Gazebo Harmonic). All results below come from the
 Gazebo ground-truth monitor (`tools/gt_monitor.py`) and `tools/suite_report.py`; the
 raw logs, CSVs and bags are not in the repository (`suite_results/`, ~5 GB, git-ignored).
@@ -80,7 +83,7 @@ incursions, both passed in the baseline). Diagnosis:
 |---|---|---|
 | 10 | PASS | GOAL_OCCUPIED → alternate goal; final turn used once |
 | 12 | **FAIL** | wheel in `crater_2` (6 samples) again; crater now 46 % mapped |
-| 14 | PASS | final turn avoided the loop |
+| 14 | PASS | ~~final turn avoided the loop~~ — **corrected 2026-10-13:** no `final_turn` entry was logged in this run; the rover took a different, direct route (6.3 m vs 9.8 m in state B) and arrived 21° off the goal heading, inside Nav2's 23° yaw tolerance, so no loop was needed. The pass is not evidence for the final turn. |
 | 12 (diagnostic tool attached) | PASS | `crater_2` visible ~2 s, confirmed ~1.5 m ahead, route diverted |
 
 State D (faster replanning, slower cruise) targets exactly this seed-12 reaction-time

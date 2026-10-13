@@ -9,8 +9,18 @@ above the ground -- so craters are found with the depth camera:
   inliers; this absorbs the chassis pitch that the 2D EKF does not model) ->
   points more than `depth_threshold` BELOW the plane, inside `max_range`,
   outside the rover's own body box -> map-frame 5 cm cells ->
+  + the occlusion shadow of those cells (see frame_cells) ->
   a cell is confirmed after hits in `min_hits` different frames ->
   /crater_cells (PointCloud2 in map, z = 0.05) for the costmaps' crater_layer.
+
+Occlusion shadow: from the approach side the camera sees only the far wall of a
+bowl -- the near slope drops away behind the rim -- so a 40 cm crater was mapped as
+13-17 of its ~50-78 cells and a wheel crossed the unmapped slope (seed 12: crater_2,
+5.9 cm deep, 46 % mapped, a left wheel through its middle). Every cell between a
+below-plane cell and the camera that this frame did NOT see as level ground is
+therefore counted too, up to `shadow_max_len` (the rulebook's 40-50 cm crater width),
+stopping at the first cell seen as ground (the near rim). Flat ground in view is
+always seen, so the shadow fills only what a depression hides.
 
 Confirmed cells are kept (the crater_layer is marking-only, so LiDAR rays that
 pass over a crater can never clear it) until marker_localizer announces a
@@ -48,6 +58,66 @@ def _cloud_xyz(msg: PointCloud2, stride: int) -> np.ndarray:
     return pts[np.all(np.isfinite(pts), axis=1)]
 
 
+def _cells(pts_xy: np.ndarray, cell: float, min_pts: int) -> set:
+    if len(pts_xy) == 0:
+        return set()
+    c, n = np.unique(np.floor(pts_xy / cell).astype(np.int64), axis=0, return_counts=True)
+    return {(int(i), int(j)) for (i, j), k in zip(c, n) if k >= min_pts}
+
+
+def frame_cells(pb: np.ndarray, coef, T: np.ndarray, depth_threshold: float, cell: float,
+                min_pts: int, shadow_max_len: float, observable=None):
+    """Cells (in T's frame) one camera frame marks as crater: (below-plane cells, shadow cells).
+
+    pb: Nx3 points in base_footprint (already range/self-box filtered); coef: ground
+    plane (a, b, c) in base_footprint; T: 4x4 base_footprint -> map (or odom).
+    Shadows walk from each below-plane cell toward the camera (CAMERA_XY through T),
+    i.e. back along the rays that could not see the ground there. The walk also
+    stops where the detector does not look at all (observable(x, y) in
+    base_footprint is False: inside min_range, beyond max_range, or in the rover's
+    self box) -- ground there is unseen because it is ignored, not because it is hidden.
+    """
+    resid = pb[:, 2] - (coef[0] * pb[:, 0] + coef[1] * pb[:, 1] + coef[2])
+    low = pb[(resid < -depth_threshold) & (resid > -0.5)]
+    if len(low) == 0:
+        return set(), set()
+    ground = pb[np.abs(resid) < depth_threshold]
+    R, t = T[:2, :2], T[:2, 3]
+    low_c = _cells(low[:, :2] @ R.T + t, cell, min_pts)
+    if shadow_max_len <= 0 or not low_c:
+        return low_c, set()
+    ground_c = _cells(ground[:, :2] @ R.T + t, cell, 1) - low_c
+    cam = T @ np.array([CAMERA_XY[0], CAMERA_XY[1], 0.0, 1.0])
+    Rinv = R.T
+    shadow = set()
+    step = cell / 2.0
+    for i, j in low_c:
+        p = np.array([(i + 0.5) * cell, (j + 0.5) * cell])
+        d = cam[:2] - p
+        n = np.hypot(*d)
+        if n < 1e-6:
+            continue
+        d /= n
+        k = 1
+        while k * step <= min(shadow_max_len, n):
+            q = p + d * k * step
+            key = (int(np.floor(q[0] / cell)), int(np.floor(q[1] / cell)))
+            if key in ground_c:
+                break
+            if observable is not None:
+                qb = Rinv @ (q - t)
+                if not observable(qb[0], qb[1]):
+                    break
+            if key not in low_c:
+                shadow.add(key)
+            k += 1
+    return low_c, shadow
+
+
+# camera position in base_footprint (urdf: camera_link at x 0.47, z 0.33); only x/y are used
+CAMERA_XY = (0.47, 0.0)
+
+
 def fit_ground(pts: np.ndarray, band: float = 0.06, inlier: float = 0.02):
     """Least-squares plane z = a*x + b*y + c through near-ground points; returns (a, b, c) or None."""
     sel = pts[np.abs(pts[:, 2]) < band]
@@ -83,6 +153,7 @@ class CraterDetector(Node):
         dp('cell_size', 0.05)
         dp('min_hits', 2)                # distinct frames before a cell is confirmed
         dp('min_points_per_cell', 2)     # points in one frame to count a hit
+        dp('shadow_max_len', 0.45)       # m; 0 disables the occlusion shadow (see module doc)
         # Rover's own body (base_footprint frame) incl. a deployed arm/bucket: ignore.
         dp('self_box', [-0.75, 1.30, -0.50, 0.50])   # x_min, x_max, y_min, y_max
         self._tf_buffer = Buffer()
@@ -106,6 +177,13 @@ class CraterDetector(Node):
             f'crater_detector: {self._stats}, {len(self._confirmed)} confirmed cells'))
         self._frames = 0
 
+    def _observable_fn(self):
+        """f(x, y): a base_footprint point the detector looks at (range band, outside the self box)."""
+        g = lambda n: self.get_parameter(n).value  # noqa: E731
+        r0, r1 = g('min_range'), g('max_range')
+        x0, x1, y0, y1 = g('self_box')
+        return lambda x, y: r0 < np.hypot(x, y) < r1 and not (x0 < x < x1 and y0 < y < y1)
+
     def _on_reinit(self, _msg):
         """Localization jumped: cells recorded since the last good fix may be displaced."""
         self.get_logger().warn(f'Localization re-initialised: dropping {len(self._confirmed)} crater cells.')
@@ -114,11 +192,14 @@ class CraterDetector(Node):
 
     def _count_hits(self, hits: dict, pm: np.ndarray):
         """Add one frame's below-plane points (frame coordinates) to per-cell frame counts."""
-        cells, counts = np.unique(np.floor(pm[:, :2] / self.get_parameter('cell_size').value).astype(np.int64),
-                                  axis=0, return_counts=True)
-        for (i, j), n in zip(cells, counts):
-            if n >= self.get_parameter('min_points_per_cell').value:
-                hits[(int(i), int(j))] = hits.get((int(i), int(j)), 0) + 1
+        self._add_frame(hits, _cells(pm[:, :2], self.get_parameter('cell_size').value,
+                                     self.get_parameter('min_points_per_cell').value))
+
+    @staticmethod
+    def _add_frame(hits: dict, cells: set):
+        """One frame counts at most once per cell."""
+        for key in cells:
+            hits[key] = hits.get(key, 0) + 1
 
     def _merge_odom_hits(self, T_map_odom: np.ndarray):
         """Move the pre-fix odom-cell counts into map cells (cell centres transformed)."""
@@ -181,19 +262,20 @@ class CraterDetector(Node):
         if coef is None:
             self._stats['no_plane'] += 1
             return
-        resid = pb[:, 2] - (coef[0] * pb[:, 0] + coef[1] * pb[:, 1] + coef[2])
-        low = pb[(resid < -g('depth_threshold')) & (resid > -0.5)]
+        low_c, shadow_c = frame_cells(pb, coef, T_map_base if T_map_base is not None else T_odom_base,
+                                      g('depth_threshold'), g('cell_size'), g('min_points_per_cell'),
+                                      g('shadow_max_len'), self._observable_fn())
         self._frames += 1
         self._stats['frames'] += 1
-        self._stats['with_hits'] += int(len(low) > 0)
+        self._stats['with_hits'] += int(bool(low_c))
+        self._stats['shadow_cells'] = self._stats.get('shadow_cells', 0) + len(shadow_c)
         if T_map_base is None:
             self._pre['frames'] += 1
-            self._pre['with_hits'] += int(len(low) > 0)
-            if len(low):
-                self._count_hits(self._odom_hits, low @ T_odom_base[:3, :3].T + T_odom_base[:3, 3])
+            self._pre['with_hits'] += int(bool(low_c))
+            self._add_frame(self._odom_hits, low_c | shadow_c)
             return
-        if len(low):
-            self._count_hits(self._hits, low @ T_map_base[:3, :3].T + T_map_base[:3, 3])
+        if low_c:
+            self._add_frame(self._hits, low_c | shadow_c)
             self._confirmed |= {k for k, n in self._hits.items() if n >= g('min_hits')}
         self._publish(msg.header.stamp)
 

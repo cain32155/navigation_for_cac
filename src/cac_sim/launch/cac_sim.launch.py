@@ -43,6 +43,7 @@ def launch_setup(context, *args, **kwargs):
     use_rviz = _bool(context, 'use_rviz')
     headless = _bool(context, 'headless')
     egl = _bool(context, 'egl')
+    material_visual = _bool(context, 'material_visual')
     world_file = LaunchConfiguration('world').perform(context)
     run_dir = LaunchConfiguration('run_dir').perform(context) or os.path.join(
         tempfile.gettempdir(), 'cac_sim_runs', f'seed_{seed}')
@@ -125,13 +126,18 @@ def launch_setup(context, *args, **kwargs):
         parameters=[arena_yaml, f'{pkg_share}/config/arm_params.yaml',
                     {'autonomy': autonomy, 'use_sim_time': True}],
     )
+    material_visualizer = Node(
+        package='cac_sim', executable='material_visualizer', output='screen',
+        condition=IfCondition(str(material_visual)),
+        parameters=[{'world': 'cac_arena', 'use_sim_time': True}],
+    )
     rviz = Node(
         package='rviz2', executable='rviz2', condition=IfCondition(str(use_rviz)),
         arguments=['-d', f'{pkg_share}/rviz/cac_sim.rviz'], parameters=[{'use_sim_time': True}],
     )
     return [gz_sim, robot_state_publisher, spawn_robot, bridge, ground_truth, ekf_node,
             marker_localizer, wall_filter, boundary, crater_detector, nav2, perception_node,
-            mission_state_machine, rviz]
+            mission_state_machine, material_visualizer, rviz]
 
 
 def _localhost_env(context, *args, **kwargs):
@@ -164,6 +170,8 @@ def generate_launch_description():
                               description='Gazebo server only, no GUI (needs a display for sensors)'),
         DeclareLaunchArgument('egl', default_value='false',
                               description='Add --headless-rendering (known RGB-D camera segfault on some setups)'),
+        DeclareLaunchArgument('material_visual', default_value='true',
+                              description='Show the SIMULATED sand accounting in Gazebo (visual-only pile/dig marks)'),
         DeclareLaunchArgument('run_dir', default_value='',
                               description='Where generated world/meshes/params go (default <tmp>/cac_sim_runs/seed_N)'),
         DeclareLaunchArgument('localhost_only', default_value='true',

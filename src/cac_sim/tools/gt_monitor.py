@@ -19,6 +19,12 @@ localized pose), the GROUND-TRUTH pose at that moment is recorded and the leg's
 zone condition (mission_logic.zone_ok, same rules as the mission) is checked on
 it -- a COMPLETE mission whose legs did not really end where they claim fails.
 
+Material verification: every scoop/dump the mission CREDITS (material_model) is
+re-checked with the ground-truth rover pose: the bucket lip (its base_footprint
+offset, from the mission's TF at that moment) is placed on the Gazebo pose and must
+lie in the excavation zone (scoop) / in the berm target (dump credited in target).
+This checks localization, not sand: no sand moves in the simulation.
+
 Contact criteria (from the regenerated, identical seeded layout):
   wall contact     footprint corner within --contact-tol of an inner wall face
   boulder contact  footprint rectangle within --contact-tol of the sphere's
@@ -87,6 +93,14 @@ class Monitor(Node):
         self.rows = []
         self.legs = []          # [{leg, claimed, gt, gt_zone_ok}] per 'arrived' history entry
         self.seen_history = 0
+        self.material_gt = []   # per credited material event: lip placed on the ground-truth pose
+        self.seen_events = set()
+        self.mat = None
+        try:
+            from cac_sim import material_model as mm
+            self.mat = mm.MaterialModel(mm.MaterialParams.from_params(params))
+        except (ImportError, KeyError):
+            pass                 # older package without material accounting
         z = params['zones']
         self.zones = ml.Zones(tuple(z['starting_zone']), tuple(z['excavation_zone']), tuple(z['construction_zone']),
                               params['arena']['length'] / 2.0, params['arena']['width'] / 2.0)
@@ -120,6 +134,25 @@ class Monitor(Node):
                                                                  round(math.degrees(gt[2]), 1)],
                                   'gt_zone_ok': gt is not None and ml.zone_ok(leg, gt, self.mfp, self.zones)})
         self.seen_history = len(hist)
+        for ev in (self.status.get('summary') or {}).get('material_events', []):
+            key = (ev.get('kind'), ev.get('id'))
+            if not ev.get('accepted') or key in self.seen_events or self.mat is None:
+                continue
+            self.seen_events.add(key)
+            rec = {'kind': ev['kind'], 'id': ev['id'], 'volume_l': ev.get('volume_l'),
+                   't': round(time.time() - self.t0, 1), 'lip_claimed': ev.get('lip'), 'lip_gt': None, 'gt_ok': False}
+            lb, gt = ev.get('lip_base'), self.gt
+            if lb and gt is not None:
+                c, s_ = math.cos(gt[2]), math.sin(gt[2])
+                lx, ly = gt[0] + c * lb[0] - s_ * lb[1], gt[1] + s_ * lb[0] + c * lb[1]
+                rec['lip_gt'] = [round(lx, 3), round(ly, 3)]
+                if ev['kind'] == 'scoop':
+                    rec['gt_ok'] = self.mat.in_excavation_zone(lx, ly)
+                elif ev.get('in_target'):
+                    rec['gt_ok'] = self.mat.in_berm_target(lx, ly)
+                else:
+                    rec['gt_ok'] = self.mat.in_construction_zone(lx, ly)
+            self.material_gt.append(rec)
 
     def on_craters(self, msg):
         import numpy as np
@@ -264,12 +297,17 @@ def main():
                                 for leg in ('excavation', 'construction', 'return'))
                             and all(x['gt_zone_ok'] for x in mon.legs),
         'crater_false_cells': false_cells,
+        'material_gt': mon.material_gt,
+        'material_gt_verified': all(x['gt_ok'] for x in mon.material_gt) if mon.material_gt else None,
+        'run_summary': {k: v for k, v in (mon.status.get('summary') or {}).items() if k != 'material_events'},
         'duration_sec': rows[-1]['t'] if rows else 0,
         'layout': arena_layout.describe(layout),
     }
     with open(args.out + '_summary.json', 'w') as f:
         json.dump(summary, f, indent=1)
-    print(json.dumps({k: v for k, v in summary.items() if k not in ('layout', 'mission_status')}, indent=1))
+    print(json.dumps({k: v for k, v in summary.items() if k not in ('layout', 'mission_status', 'run_summary')},
+                     indent=1))
+    print('run summary:', json.dumps(summary['run_summary']))
     print('mission history:', json.dumps(mon.status.get('history'), indent=0))
     mon.destroy_node()
     rclpy.try_shutdown()

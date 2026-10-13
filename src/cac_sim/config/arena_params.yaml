@@ -45,6 +45,9 @@
       # corner) kept from walls and obstacles at the start pose, so the
       # localization spin can never touch anything.
       spin_margin: 0.10
+      # Sum of every <inertial> mass in urdf/ (test_consistency checks it); the
+      # rulebook limit is 80 kg. Used for the BCP-mass estimate in the run summary.
+      mass_kg: 50.55
 
     obstacles:
       num_boulders: 3          # rulebook: "at least three"
@@ -91,17 +94,20 @@
       #  - excavation_approach: the dig pose puts the bucket lip 0.93-1.08 m
       #    ahead of base_footprint -> sand is taken at x = 3.28-3.43, inside the
       #    excavation zone (sand may only come from there).
-      #  - construction_approach: stowed front edge 0.31 m into the construction
-      #    zone, 0.69 m from the east wall; the pour lands 0.91 m ahead -> x = 4.06,
-      #    on the berm target. Stopping 0.20 m short (Nav2's goal tolerance) still
-      #    leaves 0.11 m across x = 3.5, which the mission requires (zone_cross_margin)
-      #    so a ~0.1 m localization error cannot fake the crossing. At x = 3.05 the
-      #    front was claimed 2 cm across while ground truth was 11 cm short (seed 10,
-      #    r4_3). The old goal (berm centre, x = 4.0) put the footprint through the wall.
+      #  - construction_approach: stowed front edge 0.46 m into the construction
+      #    zone, 0.54 m from the east wall (0.37 m with the 0.06 m padding, outside the
+      #    0.11 m keep-out band); the pour lands 0.91 m ahead -> x = 4.21, on the berm
+      #    target (r = 0.4 m). Nav2 stops ~0.19 m short (goal tolerance 0.20 m): front
+      #    ~0.27 m across x = 3.5, pour at x ~ 4.02. At 3.15 the believed crossing was
+      #    only 0.11-0.14 m in all 303 E3/E4 arrivals while the x error reached 0.14 m:
+      #    24 arrivals were < 5 cm across by ground truth and one was 0.3 cm short (seed 9,
+      #    E4). At x = 3.05 the front was claimed 2 cm across while ground truth was 11 cm
+      #    short (seed 10, r4_3). The old goal (berm centre, x = 4.0) put the footprint
+      #    through the wall. The seeded layouts do not change (reachability re-checked).
       #  - return_approach: start-zone centre, facing west so the camera sees the
       #    start-zone markers again.
       excavation_approach:   [2.35, 0.0, 0.0]
-      construction_approach: [3.15, 0.0, 0.0]
+      construction_approach: [3.30, 0.0, 0.0]
       return_approach:       [-3.55, 0.0, 3.14159265]
       # Arrival is accepted only when the localized pose is within these of the
       # goal AND the zone condition for that leg holds.
@@ -123,9 +129,52 @@
       survey_turn_rate: 0.35
       survey_timeout_sec: 60.0
       leg_timeout_sec: 240.0   # per attempt
-      num_cycles: 1            # excavate -> dump cycles before returning
-      excavation_duration_sec: 8.0
-      dump_duration_sec: 5.0
+      # Excavate -> carry -> dump cycles. num_cycles is the MAXIMUM; another cycle
+      # starts only if elapsed mission time + the longest cycle so far + the return
+      # reserve fits time_budget_sec (rulebook prelims: 10 min run). Full Autonomy
+      # needs >= 2 full cycles for 600 points (rulebook, Autonomous Operations).
+      num_cycles: 10
+      time_budget_sec: 600.0
+      return_reserve_sec: 150.0  # kept for the return leg (measured 60-90 s + retries)
+      first_cycle_estimate_sec: 90.0   # until a cycle has been measured
+      # Between cycles: back straight up from the construction goal to the
+      # excavation goal (mission_logic.reverse_distance), costmap-checked.
+      reverse_speed: 0.10
+      reverse_timeout_sec: 20.0
+      max_dig_attempts: 2      # dig passes per cycle before the cycle is failed
+      # Dead-reckoning budget: no new cycle if the drift added by the cycles,
+      # 0.0136 m/rad x |rotation since the first excavation arrival|, would exceed
+      # drift_max after it. Markers are only seen from the start zone; seed 10 (Nav2
+      # loops of ~7.5 rad per cycle) drifted 0.14 -> 0.34 m over 6 cycles and a pour
+      # landed outside the berm target. Typical cycles turn 0-1.4 rad.
+      drift_per_rad: 0.0136
+      drift_max: 0.15
+      # Scan stops while crossing the obstacle zone: every scan_spacing m the Nav2 goal
+      # is paused, the rover faces heading + each offset (costmap-checked), holds, and
+      # resumes the same goal. The +-33 deg camera otherwise sees ground beside the
+      # route only at the image edge (seed 12: crater_2, a wheel in it after the route
+      # turned toward it). [] disables.
+      scan_spacing: 1.2
+      scan_offsets_deg: [-50.0, 50.0]
+      scan_hold_sec: 1.0
+      scan_timeout_sec: 30.0
+
+    # Sand accounting (cac_sim/material_model.py). SIMULATED ESTIMATES: Gazebo's
+    # sand is rigid and does not move; these parameters turn arm actions into
+    # volumes. Assumptions are marked; bucket size comes from urdf/arm.xacro.
+    material:
+      bucket_capacity_l: 1.183     # 0.13 x 0.14 x 0.065 m bucket interior (struck)
+      fill_factor: 0.8             # ASSUMPTION: fraction filled by one pass
+      bulk_density_kg_m3: 1500.0   # ASSUMPTION: loose dry sand
+      max_cut_height: 0.05         # lip within 5 cm of the surface at the dig pose
+      dig_cell: 0.25               # dig sites: square cells of the excavation zone
+      max_dig_depth: 0.15          # ASSUMPTION: usable depth per site (half the 30 cm bed)
+      # arm sequence indices (0-based, arm_params.yaml): the lip is located at the
+      # cut pose and the scoop is credited when the curl pose is reached; the
+      # dump is credited when the pour pose is reached.
+      cut_pose_index: 1
+      curl_pose_index: 2
+      pour_pose_index: 1
 
     localization:
       # Width of the band inside each wall whose LiDAR returns are discarded

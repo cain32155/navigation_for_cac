@@ -27,5 +27,8 @@
                       0.30, -1.35, 0.90,
                       0.30, -1.00, 2.10,
                       0.0, 0.0, 0.0]
+      # bucket lip ahead of base_footprint at the dig pose (FK above); the mission
+      # nudges the rover before digging if this would land outside the excavation zone
+      dig_lip_forward: 0.94
       pose_tolerance: 0.10
       pose_timeout_sec: 10.0

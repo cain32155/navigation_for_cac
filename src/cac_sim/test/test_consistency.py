@@ -175,3 +175,10 @@ def test_wall_filter_lidar_height_matches_urdf(urdf):
     from cac_sim import wall_filter
     assert "'lidar_height', 0.10" in inspect.getsource(wall_filter)
     assert abs(z - 0.10) < 1e-6
+
+
+def test_robot_mass_param_matches_urdf(urdf):
+    # robot.mass_kg feeds the BCP-mass estimate; rulebook limit 80 kg
+    total = sum(float(m.get('value')) for m in urdf.iter('mass'))
+    assert abs(PARAMS['robot']['mass_kg'] - total) < 0.01
+    assert total <= 80.0

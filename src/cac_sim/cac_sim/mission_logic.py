@@ -6,6 +6,10 @@ asks this module every question whose answer decides a state transition:
   - what to do with a navigation result?    -> decide_nav_result()
   - which goal to try next on this leg?     -> candidate_goals()
   - how to get off a lethal cell?          -> escape_motion()
+  - start another excavate/dump cycle?      -> another_cycle()
+  - back up to the dig site between cycles? -> reverse_distance() + straight_drive_safe()
+  - will the bucket dig inside the zone?    -> dig_correction()
+  - time to stop and look sideways?         -> scan_due()
 """
 import math
 from dataclasses import dataclass
@@ -273,3 +277,89 @@ def turn_in_place_safe(grid, pose: tuple, target_yaw: float, fp: Footprint, pad:
     n = max(2, int(abs(d) / math.radians(2.5)))
     return all(lethal_cells(grid, (pose[0], pose[1], pose[2] + d * k / n), fp, pad) <= start
                for k in range(1, n + 1))
+
+
+def straight_drive_safe(grid, pose: tuple, dist: float, fp: Footprint, pad: float = 0.02,
+                        step: float = 0.025) -> bool:
+    """True if driving straight (dist > 0 forward, < 0 backward) from pose never puts
+    the padded footprint on a lethal cell the start pose does not already cover."""
+    start = lethal_cells(grid, pose, fp, pad)
+    n = max(2, int(abs(dist) / step))
+    c, s = math.cos(pose[2]), math.sin(pose[2])
+    return all(lethal_cells(grid, (pose[0] + c * dist * k / n, pose[1] + s * dist * k / n, pose[2]), fp, pad)
+               <= start for k in range(1, n + 1))
+
+
+def reverse_distance(pose: tuple, goal: tuple, max_lateral: float = 0.25, max_yaw: float = 0.35,
+                     max_dist: float = 1.2):
+    """Metres to back up straight from pose to reach goal, or None.
+
+    Between cycles the rover stands at the construction goal facing the berm and
+    the excavation goal lies straight behind it with the same heading. The lattice
+    planner (no reverse primitives) would turn around and back, sweeping the 1.13 m
+    rover through a full circle twice; backing up is the excavator's own move.
+    Only offered when the goal is behind (along-track), close to the rover's line
+    (lateral) and at about the same heading."""
+    c, s = math.cos(pose[2]), math.sin(pose[2])
+    dx, dy = goal[0] - pose[0], goal[1] - pose[1]
+    along, lateral = c * dx + s * dy, -s * dx + c * dy
+    if along >= -0.05 or -along > max_dist or abs(lateral) > max_lateral:
+        return None
+    if abs(angle_diff(goal[2], pose[2])) > max_yaw:
+        return None
+    return along
+
+
+def another_cycle(cycles_done: int, max_cycles: int, mission_elapsed: float, budget: float,
+                  cycle_estimate: float, return_reserve: float, drift_now: float = 0.0,
+                  drift_per_cycle: float = 0.0, drift_max: float = float('inf')):
+    """(bool, reason): start another excavate -> dump cycle?
+
+    Bounded three ways: at most max_cycles; the elapsed mission time plus one more
+    cycle (estimated from the cycles so far) plus the time kept for the return leg
+    must fit the run-time budget (rulebook prelims: 10 min run); and the estimated
+    dead-reckoning error after one more cycle must stay within drift_max. Markers are
+    seen only from the start zone, so every cycle adds unseen drift (seed 10, E3:
+    0.14 -> 0.34 m over 6 cycles; the 4th pour landed 0.15 m outside the berm target)."""
+    if cycles_done >= max_cycles:
+        return False, f'{cycles_done}/{max_cycles} cycles done'
+    if drift_now + drift_per_cycle > drift_max:
+        return False, (f'localization drift estimate: {drift_now:.2f} m now + {drift_per_cycle:.2f} m per cycle '
+                       f'> {drift_max:.2f} m')
+    need = mission_elapsed + cycle_estimate + return_reserve
+    if need > budget:
+        return False, (f'time budget: {mission_elapsed:.0f} s elapsed + {cycle_estimate:.0f} s per cycle + '
+                       f'{return_reserve:.0f} s return reserve > {budget:.0f} s')
+    return True, f'{mission_elapsed:.0f} s elapsed, next cycle ends by ~{need - return_reserve:.0f} s'
+
+
+def dig_correction(pose: tuple, lip_forward: float, zone_x: tuple, target_lip_x: float,
+                   near_margin: float = 0.05, far_margin: float = 0.10, max_drive: float = 0.5):
+    """Straight drive (m, + forward) that puts the dig-pose bucket lip back inside the
+    excavation zone, 0.0 if it already lands there, None if no short drive can.
+
+    The lip lands lip_forward ahead of base_footprint (arm FK). Arrival tolerance
+    (0.30 m) lets the rover stop where the lip would cut across x = 3.5, in the
+    construction zone (seed 10, E1: lip at x = 3.50, both scoops rightly refused).
+    """
+    c = math.cos(pose[2])
+    lip_x = pose[0] + lip_forward * c
+    if zone_x[0] + near_margin <= lip_x <= zone_x[1] - far_margin:
+        return 0.0
+    if abs(c) < 0.5:
+        return None
+    d = (target_lip_x - lip_x) / c
+    return d if abs(d) <= max_drive else None
+
+
+def scan_due(pose: tuple, last_scan_xy, spacing: float, zone_x: tuple, edge: float = 0.3) -> bool:
+    """True when the rover is inside the obstacle zone (edge m in from its x-limits) and
+    has moved `spacing` m since the last scan (or never scanned on this crossing).
+
+    The camera sees +-33 deg ahead; a route that runs past a crater and then turns
+    toward it crosses ground seen only at the image edge (seed 12, E2: crater_2 at
+    29-33 deg for 9.5 s, never mapped, a wheel in it). A scan stop turns the camera
+    across +-50 deg so the ground beside the route is seen before the route turns."""
+    if not zone_x[0] + edge <= pose[0] <= zone_x[1] - edge:
+        return False
+    return last_scan_xy is None or math.hypot(pose[0] - last_scan_xy[0], pose[1] - last_scan_xy[1]) >= spacing

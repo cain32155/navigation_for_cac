@@ -45,6 +45,7 @@ setup(
             'wall_filter = cac_sim.wall_filter:main',
             'arena_boundary_publisher = cac_sim.arena_boundary_publisher:main',
             'crater_detector = cac_sim.crater_detector:main',
+            'material_visualizer = cac_sim.material_visualizer:main',
         ],
     },
 )
