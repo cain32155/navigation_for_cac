@@ -1,30 +1,5 @@
-# colcon workspace output (the repository root is the workspace: colcon build here)
-build/
-install/
-log/
-
-# simulation validation output: per-seed logs, CSVs, rosbags, generated worlds
-suite_results/
-cac_sim_runs/
-*.mcap
-*.db3
-rosbag2_*/
-
-# backups and archives of the working tree
-*.tar.gz
-*.tgz
-*.orig
-*.rej
-
-# Python
+ros2_ws/build/
+ros2_ws/install/
+ros2_ws/log/
+*.pyc
 __pycache__/
-*.py[cod]
-.pytest_cache/
-*.egg-info/
-
-# editors / OS
-.vscode/
-.idea/
-*.swp
-*~
-.DS_Store
